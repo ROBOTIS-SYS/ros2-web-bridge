@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://static.robotwebtools.org/EventEmitter2/current/eventemitter2.min.js"></script>
+    <script src="https://static.robotwebtools.org/roslibjs/current/roslib.js"></script>
+
+    <script>
+        // -------------------
+        // Get Call Location from URL
+        // -------------------
+        const urlParams = new URLSearchParams(window.location.search);
+        const call_location = urlParams.get('uuid');
+
+        // var location = searchParam('location');
+        console.log('Call Location : ' + call_location);
+
+        // -------------------
+        // ROS Definition
+        // -------------------
+        var get_task_list_service;
+        var call_robot_pub;
+        var result_sub;
+        var task_list_sub;
+
+        // -------------------
+        // Connecting to ROS
+        // -------------------
+        var ros = new ROSLIB.Ros();
+
+        // If there is an error on the backend,B an 'error' emit will be emitted.
+        ros.on('error', function (error) {
+            document
+                .getElementById('connecting')
+                .style
+                .display = 'none';
+            document
+                .getElementById('connected')
+                .style
+                .display = 'none';
+            document
+                .getElementById('closed')
+                .style
+                .display = 'none';
+            document
+                .getElementById('error')
+                .style
+                .display = 'inline';
+            console.log(error);
+        });
+
+        // Find out exactly when we made a connection.
+        ros.on('connection', function () {
+            console.log('Connection made!');
+            document
+                .getElementById('connecting')
+                .style
+                .display = 'none';
+            document
+                .getElementById('error')
+                .style
+                .display = 'none';
+            document
+                .getElementById('closed')
+                .style
+                .display = 'none';
+            document
+                .getElementById('connected')
+                .style
+                .display = 'inline';
+
+            init_ros();
+        });
+
+        ros.on('close', function () {
+            console.log('Connection closed.');
+            document
+                .getElementById('connecting')
+                .style
+                .display = 'none';
+            document
+                .getElementById('connected')
+                .style
+                .display = 'none';
+            document
+                .getElementById('closed')
+                .style
+                .display = 'inline';
+        });
+
+        // Create a connection to the rosbridge WebSocket server.
+        ros.connect('ws://192.167.3.33:9090');
+
+        // var count = 0; setInterval(() => {   var message = 'hello from ros2bridge ' +
+        // count++;   example.publish({data: message});
+        // document.getElementById("publisher").innerText = message; }, 1000);
+
+        function init_ros() {
+            // Create a Service client with details of the service's name and service type.
+            get_task_list_service = new ROSLIB.Service(
+                { ros: ros, name: '/service_manager_robotis/get_detail_task_queue', serviceType: 'task_manager_interfaces/srv/GetTaskItemQueue' }
+            );
+            console.log('service client : ' + get_task_list_service.name);
+
+            // Publish a Topic
+            call_robot_pub = new ROSLIB.Topic(
+                { ros: ros, name: '/call_robot', messageType: 'std_msgs/String' }
+            );
+            console.log('publish topic : ' + call_robot_pub.name);
+
+            // Subscribe a Topic
+            result_sub = new ROSLIB.Topic(
+                { ros: ros, name: '/call_robot_result', messageType: 'std_msgs/String' }
+            );
+            console.log('subscription topic : ' + result_sub.name);
+
+            task_list_sub = new ROSLIB.Topic(
+                { ros: ros, name: '/service_manager_robotis/task_list', messageType: 'task_manager_interfaces/msg/TaskListItems' }
+            );
+            console.log('subscription topic : ' + task_list_sub.name);
+
+            setTimeout("call_service()", 500);
+
+            result_sub.subscribe(function (message) {
+                if (message.data == call_location) {
+                    document
+                        .getElementById("result")
+                        .innerText = "로봇 호출이 성공했습니다.";
+                    call_result = true;
+                }
+
+                setTimeout("reset_result()", 30000);
+            });
+
+            task_list_sub.subscribe(function (message) {
+                var task_num = 0;
+                var in_list = false;
+                var tasks = message.tasks;
+                for (let task_item of tasks) {
+                    // console.log("poi : " + task_item.target_poi);
+                    var task = task_item.task;
+                    for (let blackboard of task.blackboard_data) {
+                        // console.log(blackboard.blackboard_key + " : " + blackboard.blackboard_value);
+                        if (blackboard.blackboard_key == "uuid") {
+                            // console.log("uuid : " + blackboard.blackboard_value);
+                            if (blackboard.blackboard_value == call_location) {
+                                document
+                                    .getElementById("result")
+                                    .innerText = "현재 위치로 로봇이 호출되었습니다.";
+                                in_list = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (in_list == true) {
+                        // disable call button
+                        const call_button = document.getElementById("call_button");
+                        call_button.disabled = true;
+                        break;
+                    }
+
+                    task_num = task_num + 1;
+                }
+
+                if (in_list == false) {
+                    // enable call button
+                    const call_button = document.getElementById("call_button");
+                    call_button.disabled = false;
+                }
+
+                var text_info = "진행/대기 중인 작업 : " + task_num + " (대기시간 약 " + (task_num * 5) + "분)";
+                document
+                    .getElementById("task_info")
+                    .innerText = text_info;
+            });
+
+        };
+
+
+        // -------------------
+        // ROS Service client
+        // -------------------
+        function call_service() {
+            console.log("Call Service : Get task list");
+            var request = new ROSLIB.ServiceRequest({});
+
+            // Send the request
+            get_task_list_service.callService(request, function (result) {
+                console.log("Response : Get Task List Service");
+                var task_num = 0;
+                var in_list = false;
+                var tasks = result.tasks;
+                for (let task_item of tasks) {
+                    // console.log("poi : " + task_item.target_poi);
+                    var task = task_item.task;
+                    for (let blackboard of task.blackboard_data) {
+                        // console.log(blackboard.blackboard_key + " : " + blackboard.blackboard_value);
+                        if (blackboard.blackboard_key == "uuid") {
+                            // console.log("uuid : " + blackboard.blackboard_value);
+                            if (blackboard.blackboard_value == call_location) {
+                                document
+                                    .getElementById("result")
+                                    .innerText = "현재 위치로 로봇이 호출되었습니다.";
+                                in_list = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (in_list == true) {
+                        // disable call button
+                        const call_button = document.getElementById("call_button");
+                        call_button.disabled = true;
+                        break;
+                    }
+
+                    task_num = task_num + 1;
+                }
+
+                if (in_list == false) {
+                    // enable call button
+                    const call_button = document.getElementById("call_button");
+                    call_button.disabled = false;
+                }
+
+                var text_info = "진행/대기 중인 작업 : " + task_num + " (대기시간 약 " + (task_num * 5) + "분)";
+                document
+                    .getElementById("task_info")
+                    .innerText = text_info;
+            });
+        };
+
+        // -------------------
+        // ROS Subscription
+        // -------------------
+        var call_result = false;
+
+        // -------------------
+        // Functions
+        // -------------------
+        function call_robot() {
+            console.log('Call Robot : ' + call_location);
+            document
+                .getElementById("result")
+                .innerText = "현재 위치로 로봇을 호출했습니다.";
+            call_robot_pub.publish({ data: call_location });
+            const call_button = document.getElementById("call_button");
+            call_button.disabled = true;
+            call_result = false;
+
+            setTimeout("call_result_handle()", 5000);
+        };
+
+        function reset_result() {
+            document
+                .getElementById("result")
+                .innerText = "";
+            const call_button = document.getElementById("call_button");
+            call_button.disabled = false;
+        }
+
+        function call_result_handle() {
+            if (call_result == false) {
+                document
+                    .getElementById("result")
+                    .innerText = "로봇 호출을 실패했습니다.";
+                const call_button = document.getElementById("call_button");
+                call_button.disabled = false;
+            }
+        }
+    </script>
+</head>
+
+<body>
+    <center>
+        <h1 id="page_name" style="font-size: 4.5em;">로봇 호출</h1>
+        <p>아래의 버튼을 누르면 로봇이 현재 장소로 호출됩니다.</p>
+        <div id="statusIndicator">
+            <p id="connecting">
+                서버 상태 : 서버에 연결중...
+            </p>
+            <p id="connected" style="color:#00D600; display:none">
+                서버 상태 : 연결됨
+            </p>
+            <p id="error" style="color:#FF0000; display:none">
+                서버 상태 : 에러 발생!
+            </p>
+            <p id="closed" style="display:none">
+                연결 종료.
+            </p>
+            <p id="task_info">
+                진행/대기 중인 작업 : 0
+            </p>
+        </div>
+        <div>
+            <p>
+                <button id="call_button" style="font-size: 3.0em;" type="button" class="action_button"
+                    onclick="call_robot()">
+                    집개미 호출
+                </button>
+            </p>
+            <p id="result"></p>
+        </div>
+    </center>
+</body>
+
+</html>
